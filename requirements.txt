@@ -1,0 +1,12 @@
+# API + HTTP
+requests>=2.28.0
+
+# Database
+# (sqlite3 is stdlib, no install needed)
+
+# Visualization
+streamlit>=1.30.0
+plotly>=5.18.0
+
+# Utilities
+python-dotenv>=1.0.0  # For config if needed later
