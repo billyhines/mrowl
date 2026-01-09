@@ -14,6 +14,7 @@ sys.path.insert(0, str(project_root))
 
 import streamlit as st
 import plotly.graph_objects as go
+import numpy as np
 from datetime import datetime, timedelta
 
 from src.db import get_connection, get_active_games, get_snapshots_for_market, get_depth_for_snapshot
@@ -27,6 +28,129 @@ st.set_page_config(
 )
 
 st.title("🏈 Kalshi NFL Liquidity Tracker")
+
+
+def build_depth_heatmap(snapshots, conn):
+    """Build depth heatmap data from snapshots."""
+    snapshot_ids = [s['id'] for s in snapshots]
+    times = [s['timestamp'] for s in snapshots]
+    mids = [s['mid'] for s in snapshots]
+    
+    # Get all depth data to determine price range
+    all_depths = []
+    for snap_id in snapshot_ids:
+        depths = get_depth_for_snapshot(snap_id, conn=conn)
+        all_depths.extend(depths)
+    
+    if not all_depths:
+        return None, None, None, None
+    
+    all_prices = [d['price'] for d in all_depths]
+    min_price = max(1, min(all_prices) - 5)
+    max_price = min(99, max(all_prices) + 5)
+    price_range = list(range(min_price, max_price + 1))
+    
+    # Build matrices
+    bid_matrix = np.zeros((len(price_range), len(snapshots)))
+    ask_matrix = np.zeros((len(price_range), len(snapshots)))
+    
+    for col_idx, snap_id in enumerate(snapshot_ids):
+        depths = get_depth_for_snapshot(snap_id, conn=conn)
+        for d in depths:
+            price = d['price']
+            if price < min_price or price > max_price:
+                continue
+            row_idx = price - min_price
+            if d['side'] == 'bid':
+                bid_matrix[row_idx, col_idx] = d['quantity']
+            else:
+                ask_matrix[row_idx, col_idx] = d['quantity']
+    
+    # Combine: bids below mid (negative), asks above mid (positive)
+    combined_matrix = np.zeros_like(bid_matrix)
+    for col_idx, mid in enumerate(mids):
+        if mid is None:
+            continue
+        for row_idx, price in enumerate(price_range):
+            if price < mid:
+                combined_matrix[row_idx, col_idx] = -bid_matrix[row_idx, col_idx]
+            else:
+                combined_matrix[row_idx, col_idx] = ask_matrix[row_idx, col_idx]
+    
+    return combined_matrix, times, mids, price_range
+
+
+def build_depth_chart(depth_levels, best_bid, best_ask):
+    """Build a cumulative depth chart visualization."""
+    
+    bids = {d['price']: d['quantity'] for d in depth_levels if d['side'] == 'bid'}
+    asks = {d['price']: d['quantity'] for d in depth_levels if d['side'] == 'ask'}
+    
+    if not bids and not asks:
+        return None
+    
+    # Sort bids descending (best bid first), asks ascending (best ask first)
+    bid_prices = sorted(bids.keys(), reverse=True)
+    ask_prices = sorted(asks.keys())
+    
+    # Calculate cumulative depth
+    bid_cumulative = []
+    cumsum = 0
+    for p in bid_prices:
+        cumsum += bids[p]
+        bid_cumulative.append(cumsum)
+    
+    ask_cumulative = []
+    cumsum = 0
+    for p in ask_prices:
+        cumsum += asks[p]
+        ask_cumulative.append(cumsum)
+    
+    fig = go.Figure()
+    
+    # Bids - filled area (green)
+    if bid_prices:
+        fig.add_trace(go.Scatter(
+            x=bid_prices,
+            y=bid_cumulative,
+            fill='tozeroy',
+            fillcolor='rgba(0, 200, 83, 0.3)',
+            line=dict(color='rgb(0, 200, 83)', width=2),
+            name='Bids',
+            hovertemplate='Price: %{x}¢<br>Cumulative: %{y} contracts<extra></extra>'
+        ))
+    
+    # Asks - filled area (red)
+    if ask_prices:
+        fig.add_trace(go.Scatter(
+            x=ask_prices,
+            y=ask_cumulative,
+            fill='tozeroy',
+            fillcolor='rgba(255, 82, 82, 0.3)',
+            line=dict(color='rgb(255, 82, 82)', width=2),
+            name='Asks',
+            hovertemplate='Price: %{x}¢<br>Cumulative: %{y} contracts<extra></extra>'
+        ))
+    
+    # Add vertical lines for best bid/ask
+    if best_bid:
+        fig.add_vline(x=best_bid, line_dash="dash", line_color="green", 
+                      annotation_text=f"Bid {best_bid}¢", annotation_position="top left")
+    if best_ask:
+        fig.add_vline(x=best_ask, line_dash="dash", line_color="red",
+                      annotation_text=f"Ask {best_ask}¢", annotation_position="top right")
+    
+    fig.update_layout(
+        xaxis_title="Price (cents)",
+        yaxis_title="Cumulative Depth (contracts)",
+        height=350,
+        xaxis=dict(ticksuffix='¢'),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode='x unified'
+    )
+    
+    return fig
 
 
 def main():
@@ -70,6 +194,85 @@ def main():
         conn.close()
         st.stop()
     
+    # --- Current Stats ---
+    st.subheader("Current Stats")
+    latest_snapshot = snapshots[-1]
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Best Bid", f"{latest_snapshot['best_bid']}¢")
+    col2.metric("Best Ask", f"{latest_snapshot['best_ask']}¢")
+    col3.metric("Spread", f"{latest_snapshot['spread']}¢")
+    col4.metric("Open Interest", f"{latest_snapshot['open_interest']:,}" if latest_snapshot['open_interest'] else "N/A")
+    
+    # --- Depth Heatmap ---
+    st.subheader("📊 Depth Heatmap")
+    
+    with st.spinner("Building heatmap..."):
+        combined_matrix, times, mids, price_range = build_depth_heatmap(snapshots, conn)
+    
+    if combined_matrix is not None:
+        fig_heatmap = go.Figure()
+        
+        # Add heatmap
+        fig_heatmap.add_trace(go.Heatmap(
+            z=combined_matrix,
+            x=times,
+            y=price_range,
+            colorscale=[
+                [0, 'rgb(0, 0, 139)'],       # Dark blue (large bids)
+                [0.3, 'rgb(100, 149, 237)'], # Light blue (small bids)
+                [0.5, 'rgb(255, 255, 255)'], # White (no depth)
+                [0.7, 'rgb(255, 99, 71)'],   # Light red (small asks)
+                [1, 'rgb(139, 0, 0)'],       # Dark red (large asks)
+            ],
+            zmid=0,
+            showscale=True,
+            colorbar=dict(title="Depth")
+        ))
+        
+        # Add mid price line
+        fig_heatmap.add_trace(go.Scatter(
+            x=times,
+            y=mids,
+            mode='lines',
+            line=dict(color='black', width=2),
+            name='Mid Price'
+        ))
+        
+        fig_heatmap.update_layout(
+            xaxis_title="Time",
+            yaxis_title="Price (cents)",
+            height=500,
+            yaxis=dict(ticksuffix='¢')
+        )
+        
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+        st.caption("🔵 Blue = bid depth below mid | 🔴 Red = ask depth above mid | ⚪ White line = mid price")
+    else:
+        st.warning("No depth data available for heatmap.")
+    
+    # --- Current Depth Chart ---
+    st.subheader("📈 Current Depth Chart")
+    
+    depth_levels = get_depth_for_snapshot(latest_snapshot['id'], conn=conn)
+    fig_depth_chart = build_depth_chart(depth_levels, latest_snapshot['best_bid'], latest_snapshot['best_ask'])
+    
+    if fig_depth_chart:
+        st.plotly_chart(fig_depth_chart, use_container_width=True)
+        
+        # Summary stats below the chart
+        bids = [(d['price'], d['quantity']) for d in depth_levels if d['side'] == 'bid']
+        asks = [(d['price'], d['quantity']) for d in depth_levels if d['side'] == 'ask']
+        total_bid_depth = sum(q for _, q in bids)
+        total_ask_depth = sum(q for _, q in asks)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Bid Depth", f"{total_bid_depth:,} contracts")
+        col2.metric("Total Ask Depth", f"{total_ask_depth:,} contracts")
+        col3.metric("Bid/Ask Ratio", f"{total_bid_depth/total_ask_depth:.2f}" if total_ask_depth > 0 else "N/A")
+    else:
+        st.warning("No depth data available.")
+    
     # --- Spread over time ---
     st.subheader("Spread Over Time")
     
@@ -99,37 +302,9 @@ def main():
     )
     st.plotly_chart(fig_depth, use_container_width=True)
     
-    # --- Latest orderbook ---
-    st.subheader("Latest Orderbook")
-    
-    latest_snapshot = snapshots[-1]
-    depth_levels = get_depth_for_snapshot(latest_snapshot['id'], conn=conn)
-    
-    bids = [(d['price'], d['quantity']) for d in depth_levels if d['side'] == 'bid']
-    asks = [(d['price'], d['quantity']) for d in depth_levels if d['side'] == 'ask']
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**Bids**")
-        bids_sorted = sorted(bids, reverse=True)[:10]
-        for price, qty in bids_sorted:
-            st.write(f"{price}¢: {qty} contracts")
-    
-    with col2:
-        st.write("**Asks**")
-        asks_sorted = sorted(asks)[:10]
-        for price, qty in asks_sorted:
-            st.write(f"{price}¢: {qty} contracts")
-    
-    # --- Stats ---
-    st.subheader("Current Stats")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Best Bid", f"{latest_snapshot['best_bid']}¢")
-    col2.metric("Best Ask", f"{latest_snapshot['best_ask']}¢")
-    col3.metric("Spread", f"{latest_snapshot['spread']}¢")
-    col4.metric("Open Interest", f"{latest_snapshot['open_interest']:,}" if latest_snapshot['open_interest'] else "N/A")
+    # --- Data info ---
+    st.divider()
+    st.caption(f"📈 {len(snapshots)} snapshots | First: {snapshots[0]['timestamp']} | Last: {snapshots[-1]['timestamp']}")
     
     conn.close()
 
