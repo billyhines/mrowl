@@ -30,6 +30,11 @@ st.set_page_config(
 st.title("🏈 Kalshi NFL Liquidity Tracker")
 
 
+def signed_log(x):
+    """Apply log transform preserving sign: sign(x) * log1p(|x|)"""
+    return np.sign(x) * np.log1p(np.abs(x))
+
+
 def build_depth_heatmap(snapshots, conn):
     """Build depth heatmap data from snapshots."""
     snapshot_ids = [s['id'] for s in snapshots]
@@ -77,12 +82,14 @@ def build_depth_heatmap(snapshots, conn):
             else:
                 combined_matrix[row_idx, col_idx] = ask_matrix[row_idx, col_idx]
     
+    # Apply signed log transform for better visualization
+    combined_matrix = signed_log(combined_matrix)
+    
     return combined_matrix, times, mids, price_range
 
 
 def build_depth_chart(depth_levels, best_bid, best_ask):
     """Build a cumulative depth chart visualization."""
-    
     bids = {d['price']: d['quantity'] for d in depth_levels if d['side'] == 'bid'}
     asks = {d['price']: d['quantity'] for d in depth_levels if d['side'] == 'ask'}
     
@@ -172,8 +179,7 @@ def main():
     markets = cursor.fetchall()
     
     if not markets:
-        st.info("No data collected yet. Run the collector first:")
-        st.code("python -m src.collector")
+        st.info("No data collected yet. Run the collector first: `python -m src.collector`")
         conn.close()
         st.stop()
     
@@ -186,7 +192,7 @@ def main():
     selected_label = st.selectbox("Select Game", options=list(market_options.keys()))
     selected_ticker = market_options[selected_label]
     
-    # Get snapshots for selected market
+    # Get snapshots for this market
     snapshots = get_snapshots_for_market(selected_ticker, conn=conn)
     
     if not snapshots:
@@ -213,6 +219,18 @@ def main():
     if combined_matrix is not None:
         fig_heatmap = go.Figure()
         
+        # Create colorbar tick values and labels (in original scale)
+        # Use nice round numbers that span the likely range
+        tick_values_original = [-1000000, -100000, -10000, -1000, -100, 0, 100, 1000, 10000, 100000, 1000000]
+        tick_values_log = [float(signed_log(v)) for v in tick_values_original]
+        tick_labels = ['-1M', '-100K', '-10K', '-1K', '-100', '0', '100', '1K', '10K', '100K', '1M']
+        
+        # Filter to values within our data range
+        z_min, z_max = combined_matrix.min(), combined_matrix.max()
+        filtered = [(v, l) for v, l in zip(tick_values_log, tick_labels) if z_min <= v <= z_max]
+        if filtered:
+            tick_values_log, tick_labels = zip(*filtered)
+        
         # Add heatmap
         fig_heatmap.add_trace(go.Heatmap(
             z=combined_matrix,
@@ -227,7 +245,11 @@ def main():
             ],
             zmid=0,
             showscale=True,
-            colorbar=dict(title="Depth")
+            colorbar=dict(
+                title="Depth",
+                tickvals=list(tick_values_log),
+                ticktext=list(tick_labels)
+            )
         ))
         
         # Add mid price line
@@ -247,7 +269,7 @@ def main():
         )
         
         st.plotly_chart(fig_heatmap, use_container_width=True)
-        st.caption("🔵 Blue = bid depth below mid | 🔴 Red = ask depth above mid | ⚪ White line = mid price")
+        st.caption("🔵 Blue = bid depth below mid | 🔴 Red = ask depth above mid | ⬛ Black line = mid price")
     else:
         st.warning("No depth data available for heatmap.")
     
