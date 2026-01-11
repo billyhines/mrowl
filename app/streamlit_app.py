@@ -279,7 +279,7 @@ def main():
             yaxis=dict(ticksuffix='¢')
         )
         
-        st.plotly_chart(fig_heatmap, use_container_width=True)
+        st.plotly_chart(fig_heatmap, width="stretch")
         st.caption("🔵 Blue = bid depth below mid | 🔴 Red = ask depth above mid | ⬛ Black line = mid price")
     else:
         st.warning("No depth data available for heatmap.")
@@ -291,7 +291,7 @@ def main():
     fig_depth_chart = build_depth_chart(depth_levels, latest_snapshot['best_bid'], latest_snapshot['best_ask'])
     
     if fig_depth_chart:
-        st.plotly_chart(fig_depth_chart, use_container_width=True)
+        st.plotly_chart(fig_depth_chart, width="stretch")
         
         # Summary stats below the chart
         bids = [(d['price'], d['quantity']) for d in depth_levels if d['side'] == 'bid']
@@ -319,7 +319,7 @@ def main():
         yaxis_title="Spread (cents)",
         height=300
     )
-    st.plotly_chart(fig_spread, use_container_width=True)
+    st.plotly_chart(fig_spread, width="stretch")
     
     # --- Total depth over time ---
     st.subheader("Total Depth Over Time")
@@ -333,7 +333,7 @@ def main():
         yaxis_title="Contracts",
         height=300
     )
-    st.plotly_chart(fig_depth, use_container_width=True)
+    st.plotly_chart(fig_depth, width="stretch")
     
     # --- Data info ---
     st.divider()
