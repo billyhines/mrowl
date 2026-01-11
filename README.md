@@ -11,6 +11,10 @@ This tool collects orderbook snapshots from Kalshi's NFL betting markets, stores
 - **Historical tracking** of spreads, depth, and open interest
 - **Automatic market discovery** for active NFL games
 
+## Dashboard Preview
+
+![Dashboard Screenshot](app/assets/screenshot.png)
+
 ## Project Structure
 
 ```
