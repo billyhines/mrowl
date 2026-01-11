@@ -22,12 +22,16 @@ from src.config import DB_PATH
 
 
 st.set_page_config(
-    page_title="NFL Liquidity Tracker",
-    page_icon="🏈",
+    page_title="Mr Owl's Liquidity Tracker",
     layout="wide"
 )
-
-st.title("🏈 Kalshi NFL Liquidity Tracker")
+# st.image("app/assets/logo.png", width=200)
+# st.title("Mr Owl's Liquidity Tracker")
+col1, col2 = st.columns([1, 4])  # ratio controls width
+with col1:
+    st.image("app/assets/logo.png", width=150)
+with col2:
+    st.title("Mr Owl's Liquidity Tracker")
 
 
 def signed_log(x):
@@ -183,14 +187,21 @@ def main():
         conn.close()
         st.stop()
     
-    # Market selector
+    # Market selector - store full market info
     market_options = {
-        f"{m['away_team']} @ {m['home_team']} ({m['game_time'][:10]})": m['ticker']
+        f"{m['away_team']} @ {m['home_team']} ({m['game_time'][:10]})": {
+            'ticker': m['ticker'],
+            'team': m['team'],
+            'away_team': m['away_team'],
+            'home_team': m['home_team']
+        }
         for m in markets
     }
     
     selected_label = st.selectbox("Select Game", options=list(market_options.keys()))
-    selected_ticker = market_options[selected_label]
+    selected_market = market_options[selected_label]
+    selected_ticker = selected_market['ticker']
+    selected_team = selected_market['team']
     
     # Get snapshots for this market
     snapshots = get_snapshots_for_market(selected_ticker, conn=conn)
@@ -201,7 +212,7 @@ def main():
         st.stop()
     
     # --- Current Stats ---
-    st.subheader("Current Stats")
+    st.subheader(f"Current Stats — {selected_team} Win Market")
     latest_snapshot = snapshots[-1]
     
     col1, col2, col3, col4 = st.columns(4)
@@ -210,8 +221,8 @@ def main():
     col3.metric("Spread", f"{latest_snapshot['spread']}¢")
     col4.metric("Open Interest", f"{latest_snapshot['open_interest']:,}" if latest_snapshot['open_interest'] else "N/A")
     
-    # --- Depth Heatmap ---
-    st.subheader("📊 Depth Heatmap")
+    # --- Liquidity Heatmap ---
+    st.subheader("Liquidity Heatmap")
     
     with st.spinner("Building heatmap..."):
         combined_matrix, times, mids, price_range = build_depth_heatmap(snapshots, conn)
@@ -274,7 +285,7 @@ def main():
         st.warning("No depth data available for heatmap.")
     
     # --- Current Depth Chart ---
-    st.subheader("📈 Current Depth Chart")
+    st.subheader("Current Depth Chart")
     
     depth_levels = get_depth_for_snapshot(latest_snapshot['id'], conn=conn)
     fig_depth_chart = build_depth_chart(depth_levels, latest_snapshot['best_bid'], latest_snapshot['best_ask'])
