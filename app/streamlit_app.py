@@ -87,9 +87,10 @@ def build_depth_heatmap(snapshots, conn):
                 combined_matrix[row_idx, col_idx] = ask_matrix[row_idx, col_idx]
     
     # Apply signed log transform for better visualization
+    original_matrix = combined_matrix.copy()
     combined_matrix = signed_log(combined_matrix)
     
-    return combined_matrix, times, mids, price_range
+    return combined_matrix, original_matrix, times, mids, price_range
 
 
 def build_depth_chart(depth_levels, best_bid, best_ask):
@@ -225,7 +226,7 @@ def main():
     st.subheader("Liquidity Heatmap")
     
     with st.spinner("Building heatmap..."):
-        combined_matrix, times, mids, price_range = build_depth_heatmap(snapshots, conn)
+        combined_matrix, original_matrix, times, mids, price_range = build_depth_heatmap(snapshots, conn)
     
     if combined_matrix is not None:
         fig_heatmap = go.Figure()
@@ -241,12 +242,15 @@ def main():
         filtered = [(v, l) for v, l in zip(tick_values_log, tick_labels) if z_min <= v <= z_max]
         if filtered:
             tick_values_log, tick_labels = zip(*filtered)
+
+        hover_text = np.vectorize(lambda x: f"{abs(int(x)):,}")(original_matrix)
         
         # Add heatmap
         fig_heatmap.add_trace(go.Heatmap(
             z=combined_matrix,
             x=times,
             y=price_range,
+            text=hover_text,
             colorscale=[
                 [0, 'rgb(0, 0, 139)'],       # Dark blue (large bids)
                 [0.3, 'rgb(100, 149, 237)'], # Light blue (small bids)
@@ -260,6 +264,12 @@ def main():
                 title="Depth",
                 tickvals=list(tick_values_log),
                 ticktext=list(tick_labels)
+            ),
+            hovertemplate=(
+                "Time: %{x}<br>"
+                "Price: %{y}¢<br>"
+                "Depth: %{text} contracts<br>"
+                "<extra></extra>"  # removes the trace name box
             )
         ))
         
