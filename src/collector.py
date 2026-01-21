@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -28,49 +29,97 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# NFL team abbreviations (for parsing)
+NFL_TEAMS = {
+    'ARI', 'ATL', 'BAL', 'BUF', 'CAR', 'CHI', 'CIN', 'CLE',
+    'DAL', 'DEN', 'DET', 'GB', 'HOU', 'IND', 'JAX', 'KC',
+    'LAC', 'LAR', 'LA', 'LV', 'MIA', 'MIN', 'NE', 'NO',
+    'NYG', 'NYJ', 'PHI', 'PIT', 'SEA', 'SF', 'TB', 'TEN', 'WAS'
+}
+
 
 def parse_event_ticker(event_ticker: str) -> dict:
     """
     Parse event ticker to extract game info.
     
-    Example: KXNFLGAME-26JAN10GBCHI
-    Returns: {'date_str': '26JAN10', 'away': 'GB', 'home': 'CHI'}
+    Handles multiple formats:
+    - Regular: KXNFLGAME-26JAN10GBCHI -> {'away': 'GB', 'home': 'CHI', 'date_str': '26JAN10'}
+    - Championship: KXNFLAFCCHAMP-25 -> {'away': None, 'home': None, 'date_str': '25'}
+    
+    Returns: {'date_str': str, 'away': str|None, 'home': str|None}
     """
-    # Format: KXNFLGAME-{YYMMMDD}{AWAY}{HOME}
     parts = event_ticker.split('-')
     if len(parts) != 2:
         raise ValueError(f"Unexpected event ticker format: {event_ticker}")
     
-    suffix = parts[1]  # e.g., "26JAN10GBCHI"
+    series = parts[0]
+    suffix = parts[1]
     
+    # Championship format: just a year/id like "25"
+    if len(suffix) <= 4 or not any(c.isalpha() for c in suffix[2:]):
+        return {
+            'date_str': suffix,
+            'away': None,
+            'home': None,
+            'is_championship': True
+        }
+    
+    # Regular game format: YYMMMDDAWAYHOME like "26JAN10GBCHI"
     # Date is first 7 chars (YYMMMDD), rest is teams
     date_str = suffix[:7]
     teams_str = suffix[7:]
     
-    # Teams are 2-3 chars each, but we need to figure out where to split
-    # Common NFL abbreviations are 2-3 chars
-    # For now, assume 2-3 char codes and try to split reasonably
-    # This is fragile - may need refinement based on actual data
-    
-    # Most NFL teams use 2-3 letter codes
-    # Let's assume away team is first 2-3 chars based on total length
-    if len(teams_str) == 4:
-        away, home = teams_str[:2], teams_str[2:]
-    elif len(teams_str) == 5:
-        # Could be 2+3 or 3+2, need heuristic
-        # For now assume 2+3 (more common)
-        away, home = teams_str[:2], teams_str[2:]
-    elif len(teams_str) == 6:
-        away, home = teams_str[:3], teams_str[3:]
-    else:
-        # Fallback
-        away, home = teams_str[:len(teams_str)//2], teams_str[len(teams_str)//2:]
+    # Try to intelligently split teams using known abbreviations
+    away, home = split_team_codes(teams_str)
     
     return {
         'date_str': date_str,
         'away': away,
-        'home': home
+        'home': home,
+        'is_championship': False
     }
+
+
+def split_team_codes(teams_str: str) -> tuple[str, str]:
+    """
+    Split concatenated team codes like 'GBCHI' into ('GB', 'CHI').
+    
+    Uses known NFL team abbreviations for accurate splitting.
+    """
+    # Try all possible split points
+    for i in range(2, len(teams_str) - 1):
+        away = teams_str[:i]
+        home = teams_str[i:]
+        if away in NFL_TEAMS and home in NFL_TEAMS:
+            return away, home
+    
+    # Fallback: split in half
+    mid = len(teams_str) // 2
+    return teams_str[:mid], teams_str[mid:]
+
+
+def extract_teams_from_market(market: dict) -> tuple[Optional[str], Optional[str]]:
+    """
+    Extract team names from market metadata.
+    
+    Uses title, subtitle, or other fields to determine teams.
+    """
+    # Try to get from title (e.g., "Bills vs Chiefs" or "Buffalo Bills")
+    title = market.get('title', '')
+    subtitle = market.get('subtitle', '')
+    
+    # The ticker often ends with the team code
+    ticker = market.get('ticker', '')
+    team_from_ticker = ticker.split('-')[-1] if '-' in ticker else None
+    
+    # For championship games, we might need to look at event-level data
+    # or use the yes/no contract titles
+    
+    # Try to extract from title patterns like "Team X to win"
+    # or "AFC Championship: Team X vs Team Y"
+    
+    # Return what we can find
+    return team_from_ticker, None  # Returns (team_this_market_is_for, opponent)
 
 
 def discover_markets() -> list[dict]:
@@ -101,12 +150,39 @@ def discover_markets() -> list[dict]:
             logger.warning(f"Skipping unparseable event: {e}")
             continue
         
+        # For championship games, try to get team info from market metadata
+        if parsed.get('is_championship') or not parsed.get('away'):
+            # Get team code from the market ticker (last segment)
+            ticker_parts = market['ticker'].split('-')
+            team = ticker_parts[-1] if len(ticker_parts) > 1 else 'UNK'
+            
+            # Use yes_sub_title for full team name (e.g., "New England")
+            # This is the team this market is FOR
+            team_name = market.get('yes_sub_title', team)
+            
+            # Log what we have for debugging
+            logger.debug(f"Championship market: ticker={market['ticker']}, team={team_name}")
+            
+            # If we have both markets, we can get both team names
+            if len(event_markets) == 2:
+                # Get team names from yes_sub_title of each market
+                team_names = [m.get('yes_sub_title', m['ticker'].split('-')[-1]) for m in event_markets]
+                away_team = team_names[0]
+                home_team = team_names[1]
+            else:
+                away_team = team_name
+                home_team = 'TBD'
+        else:
+            away_team = parsed['away']
+            home_team = parsed['home']
+            team = market['ticker'].split('-')[-1]
+        
         result.append({
             'event_ticker': event_ticker,
             'market_ticker': market['ticker'],
-            'team': market['ticker'].split('-')[-1],
-            'home_team': parsed['home'],
-            'away_team': parsed['away'],
+            'team': team if not parsed.get('is_championship') else market.get('yes_sub_title', team),
+            'home_team': home_team,
+            'away_team': away_team,
             'game_time': market.get('expected_expiration_time'),
             'market': market
         })
