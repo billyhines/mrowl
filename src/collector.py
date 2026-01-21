@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .config import NFL_SERIES_TICKER
+from .config import NFL_SERIES_TICKERS
 from .kalshi_api import get_nfl_markets, get_orderbook, get_market_info, build_unified_orderbook
 from .db import (
     get_connection, init_db, insert_game, insert_market,

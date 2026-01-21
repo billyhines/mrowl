@@ -153,7 +153,11 @@ DB_PATH = DATA_DIR / "nfl_liquidity.db"
 
 # API
 KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
-NFL_SERIES_TICKER = "KXNFLGAME"
+NFL_SERIES_TICKERS = [
+    "KXNFLGAME",       # Regular season / standard games
+    "KXNFLAFCCHAMP",   # AFC Championship
+    "KXNFLNFCCHAMP",   # NFC Championship
+]
 
 # Polling intervals (minutes)
 POLL_INTERVAL_FAR = 60      # >24 hours to game
