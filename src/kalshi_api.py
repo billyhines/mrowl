@@ -7,24 +7,48 @@ No authentication required for read-only market data.
 
 import requests
 from typing import Optional
-from .config import KALSHI_BASE_URL, NFL_SERIES_TICKER
+from .config import KALSHI_BASE_URL, NFL_SERIES_TICKERS
 
 
 def get_nfl_markets(status: str = 'open') -> list[dict]:
     """
-    Get all NFL game markets.
+    Get all NFL game markets across all configured series.
     
     Args:
+        status: Filter by market status ('open', 'closed', etc.)
+    
+    Returns:
+        List of market dicts from Kalshi API (combined from all series)
+    """
+    all_markets = []
+    
+    for series_ticker in NFL_SERIES_TICKERS:
+        url = f"{KALSHI_BASE_URL}/markets"
+        params = {'series_ticker': series_ticker, 'status': status}
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        markets = response.json().get('markets', [])
+        all_markets.extend(markets)
+    
+    return all_markets
+
+
+def get_markets_by_series(series_ticker: str, status: str = 'open') -> list[dict]:
+    """
+    Get markets for a specific series ticker.
+    
+    Args:
+        series_ticker: The series to query (e.g., 'KXNFLGAME')
         status: Filter by market status ('open', 'closed', etc.)
     
     Returns:
         List of market dicts from Kalshi API
     """
     url = f"{KALSHI_BASE_URL}/markets"
-    params = {'series_ticker': NFL_SERIES_TICKER, 'status': status}
+    params = {'series_ticker': series_ticker, 'status': status}
     response = requests.get(url, params=params)
     response.raise_for_status()
-    return response.json()['markets']
+    return response.json().get('markets', [])
 
 
 def get_orderbook(ticker: str) -> dict:
