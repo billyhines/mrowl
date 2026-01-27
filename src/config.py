@@ -15,6 +15,7 @@ NFL_SERIES_TICKERS = [
     "KXNFLGAME",       # Regular season / standard games
     "KXNFLAFCCHAMP",   # AFC Championship
     "KXNFLNFCCHAMP",   # NFC Championship
+    "KXSB"             # Superbowl
 ]
 
 # Polling intervals (in minutes)
